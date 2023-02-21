@@ -1,0 +1,98 @@
+version: '3.8'
+
+x-logging: &default-logging
+  logging:
+    options:
+      max-size: "100m"
+      max-file: "3"
+    driver: local
+
+x-restart: &default-restart
+  restart: "no"
+
+services:
+  api:
+    container_name: ads-api
+    build:
+      dockerfile: docker/api/Dockerfile
+      context: ./..
+      args:
+        - APP_PATH=/usr/local/src
+    environment:
+      APP_LOGGER_NAME: api
+      CACHE_PORT: $CONTAINER_CACHE_PORT
+      CACHE_URL: $CONTAINER_CACHE_NAME
+      WSGI_LOG_LEVEL: debug
+      WSGI_PORT: $CONTAINER_API_PORT
+      WSGI_WORKERS_COUNT: 2
+    ports:
+      - $HOST_BACKEND_PORT:$CONTAINER_API_PORT
+    depends_on:
+      - cache
+      - db
+      - sync
+    <<: *default-logging 
+    <<: *default-restart
+
+  sync:
+    container_name: sync
+    build:
+      dockerfile: docker/sync/Dockerfile
+      context: ./..
+      args:
+        - APP_PATH=/usr/local/src
+    environment:
+      APP_LOGGER_NAME: sync
+      APP_LOGGER_LEVEL: DEBUG
+      CACHE_PORT: $CONTAINER_CACHE_PORT
+      CACHE_URL: $CONTAINER_CACHE_NAME
+      DB_PORT: $CONTAINER_DB_PORT
+      DB_HOST: $CONTAINER_DB_NAME
+      DB_USER: $DB_USER
+      DB_PASSWORD: $DB_PASSWORD
+      DB_NAME: $DB_NAME
+    depends_on:
+      - db
+      - cache
+    <<: *default-logging 
+    <<: *default-restart
+
+  cache:
+    container_name: $CONTAINER_CACHE_NAME
+    image: redis:6-alpine3.17
+    command: redis-server --port $CONTAINER_CACHE_PORT --loglevel warning
+    <<: *default-logging
+    <<: *default-restart
+    ports:
+      - $CONTAINER_CACHE_PORT:$CONTAINER_CACHE_PORT
+    volumes:
+      - ads_cache_data:/data
+  
+  db:
+    container_name: $CONTAINER_DB_NAME
+    image: "postgres:15.1-alpine3.17"
+    ports:
+      - $CONTAINER_DB_PORT:$CONTAINER_DB_PORT
+    volumes:
+      - ads_postgresql_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=$DB_NAME
+      - POSTGRES_PASSWORD=$DB_PASSWORD
+      - POSTGRES_USER=$DB_USER
+    command: postgres -c 'max_connections=200'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready", "-d", $DB_NAME]
+      interval: 10s
+      timeout: 60s
+      retries: 5
+      start_period: 80s 
+    <<: *default-logging 
+    <<: *default-restart
+
+volumes:
+    ads_postgresql_data:
+    ads_cache_data:
+
+networks:
+  default:
+    driver: bridge
